@@ -1,0 +1,531 @@
+---
+title: "Mars_prepare"
+output: html_document
+---
+#Set-up
+```{r setup, include=FALSE}
+setwd("~/DSTI/GE_project/mars-express-power-3years/mars-express-power-3years/train_set")
+rm(list=ls(all=TRUE))
+library(data.table)
+library(zoo)
+library(padr)
+library(dplyr)
+library(xts)
+library(tabplot)
+library(ggplot2)
+origin="1970-01-01"
+memory.limit(size=12000)
+library(tidyr)
+library(Matrix)
+library(xgboost)
+library(caTools)
+library(readr)
+library(stringr)
+library(caret)
+library(car)
+```
+
+#Prepare power
+##Generate power
+```{r}
+power1<-read.csv("power--2008-08-22_2010-07-10.csv",sep=',',header=TRUE)
+power1$ut_ms<-power1$ut_ms/1000
+power1$ut_ms<-as.POSIXct(power1$ut_ms,origin=origin,tz='UTC')
+power2<-read.csv("power--2010-07-10_2012-05-27.csv",sep=',',header=TRUE)
+power2$ut_ms<-power2$ut_ms/1000
+power2$ut_ms<-as.POSIXct(power2$ut_ms,origin=origin,tz='UTC')
+power<-rbind(power1,power2)
+remove(power1)
+remove(power2)
+power$ut_ms<-round(power$ut_ms,"secs")
+#check intervals
+#for(i in 1:10){
+  #print(power$ut_ms[i+1]-power$ut_ms[i])}
+#interval min 32s
+```
+
+###Explore power (to see if we can drop some columns)
+```{r}
+#check correlation
+#library(corrplot)
+#corrplot(cor(power[2:length(power)]))
+
+
+#check columns
+t<-lapply(power,mean)
+z<-Reduce("+",t[2:length(t)])
+t2<-t[2:length(t)]
+t2<-as.data.frame(t2)
+p<-prop.table(t2)
+p2<-Reduce("+",p)#ok sum=1
+p3<-as.data.frame(t(p))
+p3$number<-colnames(p)
+p4<-p3[order(-p3$V1),]
+p4$cumul<-cumsum(p4$V1)#9 columns 80% power, 12 columns 90% columns
+power80<-p4$number[which(p4$cumul<0.8)]
+#power90<-p4$number[which(p4$cumul<0.9)]
+```
+
+###transform power(keep only variables doing 80% of the power)
+```{r}
+power80df<-subset(power,select=c("ut_ms",power80))
+#power80df$lead<-lead(power80df$ut_ms)
+#power80df$diff<-power80df$ut_ms-power80df$lead
+```
+
+###Transform in zoo.object
+```{r}
+power80.zoo<-read.zoo(power80df,drop="FALSE")
+#remove(power)
+#remove(power80df)
+```
+
+###Align power.zoo interval 60s
+```{r}
+xpower80<-xts(power80.zoo)
+xpower80<-align.time(xpower80, n=60)
+#remove(power80.zoo)
+```
+
+###Tranform in dataframe
+```{r}
+xpower80df<-data.frame(date = index(xpower80),xpower80,row.names = NULL)
+xpower80df$NPWD2532<-as.numeric(xpower80df$NPWD2532)
+xpower80df$NPWD2451<-as.numeric(xpower80df$NPWD2451)
+xpower80df$NPWD2562<-as.numeric(xpower80df$NPWD2562)
+xpower80df$NPWD2561<-as.numeric(xpower80df$NPWD2561)
+xpower80df$NPWD2551<-as.numeric(xpower80df$NPWD2551)
+xpower80df$NPWD2851<-as.numeric(xpower80df$NPWD2851)
+xpower80df$NPWD2491<-as.numeric(xpower80df$NPWD2491)
+xpower80df$NPWD2771<-as.numeric(xpower80df$NPWD2771)
+```
+
+###Aggregate by interval 30s
+```{r}
+gpower80<-xpower80df %>%
+  group_by(date) %>%
+  summarise_each(funs(sum(., na.rm=TRUE)))
+
+```
+
+```{r}
+remove(p)
+remove(p2)
+remove(p3)
+remove(p4)
+remove(power)
+remove(power80df)
+remove(z)
+remove(t)
+remove(t2)
+remove(xpower80)
+remove(xpower80df)
+remove(power80)
+remove(power90)
+remove(power80.zoo)
+```
+
+
+#Prepare saaf
+###Generate saaf
+```{r}
+saaf1<-read.csv("context--2008-08-22_2010-07-10--saaf.csv",sep=',',header=TRUE)
+saaf1$ut_ms<-saaf1$ut_ms/1000
+saaf1$ut_ms<-as.POSIXct(saaf1$ut_ms,origin=origin,tz='UTC')
+saaf2<-read.csv("context--2010-07-10_2012-05-27--saaf.csv",sep=',',header=TRUE)
+saaf2$ut_ms<-saaf2$ut_ms/1000
+saaf2$ut_ms<-as.POSIXct(saaf2$ut_ms,origin=origin,tz='UTC')
+saaf<-rbind(saaf1,saaf2)
+saaf$ut_ms<-round(saaf$ut_ms,"secs")
+remove(saaf1)
+remove(saaf2)
+#check intervals
+#for(i in 1:10){
+  #print(saaf$ut_ms[i+1]-saaf$ut_ms[i])}
+#saafcomp<-pad(saaf,start_val=minp,end_val=maxp)
+#interval min 22s, around 1 min generally
+```
+
+###Transform in zoo.object
+```{r}
+saaf.zoo<-read.zoo(saaf,drop="FALSE")
+#remove(power)
+#remove(power80df)
+```
+###Align power.zoo interval 60s
+```{r}
+xsaaf<-xts(saaf.zoo)
+xsaaf<-align.time(xsaaf, n=60)
+#remove(power80.zoo)
+```
+
+###Tranform in dataframe
+```{r}
+xsaafdf<-data.frame(date = index(xsaaf),xsaaf,row.names = NULL)
+```
+
+#Aggregate by interval 60s
+```{r}
+gsaaf<-xsaafdf %>%
+  group_by(date) %>%
+  summarise_each(funs(mean(., na.rm=TRUE)))
+```
+
+
+```{r}
+remove(saaf)
+remove(xsaaf)
+remove(xsaafdf)
+remove(saaf.zoo)
+```
+
+#Generate FTL
+
+```{r}
+ftl1<-read.csv("context--2008-08-22_2010-07-10--ftl.csv",sep=',',header=TRUE)
+ftl1$ut_ms<-ftl1$utb_ms/1000
+ftl1$utb_ms<-NULL
+ftl1$ute_ms<-ftl1$ute_ms/1000
+ftl1$ut_ms<-as.POSIXct(ftl1$ut_ms,origin=origin,tz='UTC')
+ftl1$ute_ms<-as.POSIXct(ftl1$ute_ms,origin=origin,tz='UTC')
+ftl2<-read.csv("context--2010-07-10_2012-05-27--ftl.csv",sep=',',header=TRUE)
+ftl2$ut_ms<-ftl2$utb_ms/1000
+ftl2$utb_ms<-NULL
+ftl2$ute_ms<-ftl2$ute_ms/1000
+ftl2$ut_ms<-as.POSIXct(ftl2$ut_ms,origin=origin,tz='UTC')
+ftl2$ute_ms<-as.POSIXct(ftl2$ute_ms,origin=origin,tz='UTC')
+ftl<-rbind(ftl1,ftl2)
+ftl$ut_ms<-round(ftl$ut_ms,"secs")
+remove(ftl1)
+remove(ftl2)
+
+#t<-sort(ftl$ut_ms)
+#s<-sort(ftl$ute_ms)
+#t<-t[2:length(t)]
+#s<-s[1:(length(s)-1)]
+#t-s#some missing
+```
+
+###Transform ftl
+```{r}
+ftl$ute_ms<-NULL
+ftl<-ftl[,c(3,1,2)]
+```
+39622 obs
+
+###Transform in zoo.object
+```{r}
+ftl.zoo<-read.zoo(ftl,drop="FALSE")
+#remove(power)
+#remove(power80df)
+```
+###Align power.zoo interval 60s
+```{r}
+xftl<-xts(ftl.zoo)
+xftl<-align.time(xftl, n=60)
+#remove(power80.zoo)
+```
+
+###Tranform in dataframe
+```{r}
+xftldf<-data.frame(date = index(xftl),xftl,row.names = NULL)
+gftldf<-xftldf
+length(unique(xftldf$date))#ok no need to aggregate
+gftldf<-xftldf
+```
+
+```{r}
+remove(ftl)
+remove(xftl)
+remove(xftldf)
+remove(ftl.zoo)
+```
+
+#Generate dmop
+```{r}
+dmop1<-read.csv("context--2008-08-22_2010-07-10--dmop.csv",sep=',',header=TRUE)
+dmop1$ut_ms<-dmop1$ut_ms/1000
+dmop1$ut_ms<-as.POSIXct(dmop1$ut_ms,origin=origin,tz='UTC')
+dmop2<-read.csv("context--2010-07-10_2012-05-27--dmop.csv",sep=',',header=TRUE)
+dmop2$ut_ms<-dmop2$ut_ms/1000
+dmop2$ut_ms<-as.POSIXct(dmop2$ut_ms,origin=origin,tz='UTC')
+dmop<-rbind(dmop1,dmop2)
+dmop$ut_ms<-round(dmop$ut_ms,"secs")
+remove(dmop1)
+remove(dmop2)
+t<-as.character(dmop$subsystem)
+dmop$smallsub<-as.factor(substr(t,1,5))
+remove(t)
+```
+
+###Transform in zoo.object
+```{r}
+dmop.zoo<-read.zoo(dmop,drop="FALSE")
+#remove(power)
+#remove(power80df)
+```
+###Align power.zoo interval 30s
+```{r}
+xdmop<-xts(dmop.zoo)
+xdmop<-align.time(xdmop, n=60)
+#remove(power80.zoo)
+```
+
+###Tranform in dataframe
+```{r}
+xdmopdf<-data.frame(date = index(xdmop),xdmop,row.names = NULL)
+```
+
+#Aggregate by interval 60s
+```{r}
+gdmop<-xdmopdf %>%
+  group_by(date) %>%
+  summarise_each(funs(paste(., collapse = ",")))
+```
+
+```{r}
+remove(dmop)
+remove(xdmop)
+remove(xdmopdf)
+remove(dmop.zoo)
+```
+
+#Generate evtf
+```{r}
+evtf1<-read.csv("context--2008-08-22_2010-07-10--evtf.csv",sep=',',header=TRUE)
+evtf1$ut_ms<-evtf1$ut_ms/1000
+evtf1$ut_ms<-as.POSIXct(evtf1$ut_ms,origin=origin,tz='UTC')
+evtf2<-read.csv("context--2010-07-10_2012-05-27--evtf.csv",sep=',',header=TRUE)
+evtf2$ut_ms<-evtf2$ut_ms/1000
+evtf2$ut_ms<-as.POSIXct(evtf2$ut_ms,origin=origin,tz='UTC')
+evtf<-rbind(evtf1,evtf2)
+evtf$ut_ms<-round(evtf$ut_ms,"secs")
+remove(evtf1)
+remove(evtf2)
+#check intervals
+#for(i in 1:10){
+  #print(evtf$ut_ms[i+1]-evtf$ut_ms[i])}
+#min7s
+```
+
+###Transform evtf
+```{r}
+t<-gsub('[[:digit:]]+', '', evtf$description)
+t<-gsub("*_/_",",",t)
+evtf$desc2<-as.factor(t)
+t<-strsplit(as.character(evtf$desc2),',')
+t<-unlist(t,recursive=FALSE)
+unique(t)
+
+```
+
+###Transform in zoo.object
+```{r}
+evtf.zoo<-read.zoo(evtf,drop="FALSE")
+#remove(power)
+#remove(power80df)
+```
+###Align power.zoo interval 30s
+```{r}
+xevtf<-xts(evtf.zoo)
+xevtf<-align.time(xevtf, n=60)
+#remove(power80.zoo)
+```
+
+###Tranform in dataframe
+```{r}
+xevtfdf<-data.frame(date = index(xevtf),xevtf,row.names = NULL)
+```
+
+#Aggregate by interval 60s
+```{r}
+gevtf<-xevtfdf %>%
+  group_by(date) %>%
+  summarise_each(funs(paste(., collapse = ",")))
+```
+
+```{r}
+remove(evtf)
+remove(xevtf)
+remove(xevtfdf)
+remove(evtf.zoo)
+remove(t)
+```
+
+#Aggregate all
+```{r}
+gallna<-full_join(gpower80,gsaaf,by='date')
+gallna<-full_join(gallna,gdmop,by='date')
+gallna<-full_join(gallna,gevtf,by='date')
+gallna<-full_join(gallna,gftldf,by='date')
+gallna$subsystem<-as.factor(gallna$subsystem)
+gallna$smallsub<-as.factor(gallna$smallsub)
+gallna$description<-as.factor(gallna$description)
+gallna$desc2<-as.factor(gallna$desc2)
+gallna2<-subset(gallna,!is.na(gallna$NPWD2532))
+summary(gallna2)
+```
+
+
+#Fill missing
+```{r}
+gall<-gallna
+gall$type<- na.locf(gall$type)
+gall$flagcomms<- na.locf(gall$flagcomms)
+gall$sx=0.5*(na.locf(gall$sx,fromlast=TRUE) + na.locf(gall$sx))
+gall$sa=0.5*(na.locf(gall$sa,fromlast=TRUE) + na.locf(gall$sa))
+gall$sy=0.5*(na.locf(gall$sy,fromlast=TRUE) + na.locf(gall$sy))
+gall$sz=0.5*(na.locf(gall$sz,fromlast=TRUE) + na.locf(gall$sz))
+gall$desc2<- na.locf(gall$desc2,na.rm=FALSE)
+gall$description<- na.locf(gall$description,na.rm=FALSE)
+gall$subsystem<- na.locf(gall$subsystem,na.rm=FALSE)
+gall$smallsub<- na.locf(gall$smallsub,na.rm=FALSE)
+gall<-subset(gall,!is.na(gall$description))
+gall<-subset(gall,!is.na(gall$desc2))
+gall2<-subset(gall,!is.na(gall$NPWD2532))
+```
+
+
+
+###Data exploration
+```{r}
+qplot(NPWD2551,sa,data=gall)
+library(plyr)
+test<-subset(gall,is.na(gall$flagcomms)==FALSE&is.na(gall$NPWD2532)==FALSE)
+test<-subset(test,select=c('flagcomms','NPWD2532'))
+mm<-aggregate(NPWD2532~flagcomms,data=test,FUN='mean')
+```
+
+
+#Without na
+```{r}
+gNPWD2532<-subset(gall,select=c('date','NPWD2532','sa','sx','sy','sz','subsystem','smallsub','description','desc2','type','flagcomms'))
+dNPWD2532<-as.data.frame(gNPWD2532)
+
+split<-sample.split(gNPWD2532$NPWD2532,SplitRatio = 0.6)
+train<-subset(gNPWD2532,split==TRUE)
+test<-subset(gNPWD2532,split==FALSE)
+smalltrain<-subset(train,select=-c(subsystem,description,desc2,smallsub,type))
+smalltest<-subset(test,select=-c(subsystem,description,desc2,smallsub,type))
+smalltrain$flagcomms<-as.numeric(smalltrain$flagcomms)
+smalltest$flagcomms<-as.numeric(smalltest$flagcomms)
+```
+
+#With na
+```{r}
+gNPWD2532na<-subset(gallna2,select=c('date','NPWD2532','sa','sx','sy','sz','subsystem','smallsub','description','desc2','type','flagcomms'))
+dNPWD2532na<-as.data.frame(gNPWD2532)
+
+split<-sample.split(gNPWD2532na$NPWD2532,SplitRatio = 0.6)
+trainna<-subset(gNPWD2532na,split==TRUE)
+testna<-subset(gNPWD2532na,split==FALSE)
+smalltrainna<-subset(trainna,select=-c(subsystem,description,desc2,smallsub,type))
+smalltestna<-subset(testna,select=-c(subsystem,description,desc2,smallsub,type))
+smalltrainna$flagcomms<-as.numeric(smalltrainna$flagcomms)
+smalltestna$flagcomms<-as.numeric(smalltestna$flagcomms)
+```
+
+
+###Model 1 wo na
+```{r}
+gNPWD2532<-subset(gall,select=c('date','NPWD2532','sa','sx','sy','sz','subsystem','smallsub','description','desc2','type','flagcomms'))
+dNPWD2532<-as.data.frame(gNPWD2532)
+
+split<-sample.split(gNPWD2532$NPWD2532,SplitRatio = 0.6)
+train<-subset(gNPWD2532,split==TRUE)
+test<-subset(gNPWD2532,split==FALSE)
+
+library(Matrix)
+
+previous_na_action <- options('na.action')
+options(na.action='na.pass')
+
+sparse_train<-sparse.model.matrix(NPWD2532 ~ sa+sx+sy+sz+subsystem+smallsub+description+desc2+type+flagcomms, data = train)
+
+options(na.action=previous_na_action$na.action)
+
+smalltrain<-subset(train,select=-c(subsystem,description,desc2,smallsub,type))
+smalltest<-subset(test,select=-c(subsystem,description,desc2,smallsub,type))
+smalltrain$flagcomms<-as.numeric(smalltrain$flagcomms)
+smalltest$flagcomms<-as.numeric(smalltest$flagcomms)
+
+mat_train<-as.matrix(subset(smalltrain,select=-c(NPWD2532)))
+out_train<-train$NPWD2532 == "Responder"
+
+xgb<-xgboost(data=sparse_train,label=train$NPWD2532,nrounds=1000)
+
+```
+
+
+###Model 1 
+```{r}
+
+#library(Matrix)
+
+previous_na_action <- options('na.action')
+options(na.action='na.pass')
+
+sparse_trainna<-sparse.model.matrix(NPWD2532 ~ sa+sx+sy+sz+subsystem+smallsub+description+desc2+type+flagcomms, data = trainna)
+
+options(na.action=previous_na_action$na.action)
+
+
+
+#out_train<-train$NPWD2532 == "Responder"
+
+xgbna<-xgboost(data=sparse_trainna,label=trainna$NPWD2532,nrounds=500)
+
+```
+
+Score test Model 1
+```{r}
+previous_na_action <- options('na.action')
+options(na.action='na.pass')
+
+sparse_test<-sparse.model.matrix(NPWD2532 ~ date+sa+sx+sy+sz+subsystem+smallsub+description+desc2+type+flagcomms, data = test)
+
+options(na.action=previous_na_action$na.action)
+
+smalltrain<-subset(train,select=-c(subsystem,description,desc2,smallsub,type))
+smalltest<-subset(test,select=-c(subsystem,description,desc2,smallsub,type))
+smalltrain$flagcomms<-as.numeric(smalltrain$flagcomms)
+smalltest$flagcomms<-as.numeric(smalltest$flagcomms)
+
+y_pred <- predict(xgb, sparse_test)
+length(y_pred)
+length(test$NPWD2532)
+RMSExgbModel1wona<-sqrt(sum(mean((y_pred-test$NPWD2532)^2)))
+```
+
+Score test Model 1 wo na
+```{r}
+previous_na_action <- options('na.action')
+options(na.action='na.pass')
+
+sparse_testna<-sparse.model.matrix(NPWD2532 ~ date+sa+sx+sy+sz+subsystem+smallsub+description+desc2+type+flagcomms, data = testna)
+
+options(na.action=previous_na_action$na.action)
+
+y_pred <- predict(xgbna, sparse_testna)
+length(y_pred)
+length(testna$NPWD2532)
+RMSExgbModel1<-sqrt(sum(mean((y_pred-testna$NPWD2532)^2)))
+```
+
+
+
+```{r}
+library(randomForest)
+rf<-lm(NPWD2532 ~ .,data=smalltrain)
+predrf<-predict(rf,subset(smalltest,select=-c(NPWD2532)))
+error<-predrf-test$NPWD2532
+RMSE<-sqrt(sum(mean(error^2)))
+```
+
+```{r}
+gallna3<-gall
+gallna3$description<-as.character(gallna3$description)
+gallnabig<-gallna3[which(gallna3$NPWD2532>5),]
+
+```
+

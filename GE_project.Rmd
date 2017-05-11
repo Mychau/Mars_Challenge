@@ -1,0 +1,122 @@
+---
+title: "GE_project"
+output: html_document
+---
+
+Explore training set
+```{r}
+library(data.table)
+setwd("~/DSTI/GE_project/challenge_training_input_file_age_prediction_from_eeg_signals")
+train_eeg<-fread("train_input.csv",sep=";")
+train_eeg_output<-fread("~/DSTI/GE_project/challenge_output_data_training_file_age_prediction_from_eeg_signals.csv",sep=";",header=TRUE)
+```
+
+
+Variables: 
+ID
+DEVICE
+EEG_0 to EEG_74999
+HYPNOGRAM0
+75003 variables - 581 rows
+```{r}
+str(train_eeg)
+smalltrain<-train_eeg[1:10,]
+
+```
+
+
+wavelets
+```{r}
+#test with smalltrain
+library(wavelets)
+# extracting DWT coefficients (with Haar filter)
+wtData <- NULL
+startcol<-3
+endcol<-length(smalltrain)-1
+for (i in 2:nrow(smalltrain)){#do not take in account columns that are not EEG
+  a <- t(smalltrain[i,startcol:endcol])
+  wt <- dwt(a, filter="haar", boundary="periodic")
+  wtData <- rbind(wtData, unlist(c(wt@W,wt@V[[wt@level]])))
+}
+wtData <- as.data.frame(wtData)
+```
+
+```{r}
+# set class labels into categorical values (test with smalltrain)
+classId <- train_eeg_output[1:9,]
+wtSc <- data.frame(cbind(classId, wtData))
+```
+
+```{r}
+###à revoir
+# build a decision tree with ctree() in package party (test with smalltrain)
+
+library(party)
+ct <- ctree(classId ~ ., data=wtSc,controls = ctree_control(minsplit=30,minbucket=30,maxdepth=2))
+pClassId <- predict(ct)
+```
+
+#Exploratory analysis using hypnogram
+#transform hypnogram in a dataframe
+```{r}
+hypno<-cbind(train_eeg$HYPNOGRAM,train_eeg_output$TARGET)
+hypno<-as.data.frame(hypno)
+hypno$HYPNOGRAM<-as.character(hypno$V1)
+#rows<-nrow(hypno)
+hypnosplit<-strsplit(hypno$HYPNOGRAM,split=",")
+hypnomat<-matrix(nrow=length(hypnosplit),ncol=max(lengths(hypnosplit)))
+for(row in 1:length(hypnosplit)){
+  for(column in 1:lengths(hypnosplit[row])){
+  hypnorow<-unlist(hypnosplit[row])
+  hypnomat[row,column]<-hypnorow[column]
+  }
+}
+hypnodf<-as.data.frame(hypnomat)
+```
+
+```{r}
+hypnodf2<-hypnodf
+for(row in 1:nrow(hypnodf2)){
+  for(column in 1:length(hypnodf2)){
+    if(hypnodf2[row,column]=="['0'"){
+      hypnodf2[row,column]="'0'"
+    }
+    else if(hypnodf2[row,column]=="'0']"){
+      hypnodf2[row,column]="'0'"
+    }
+    else if(hypnodf2[row,column]=="'1']"){
+    hypnodf2[row,column]="'1'"
+    }
+    else if(hypnodf2[row,column]=="'2']"){
+    hypnodf2[row,column]="'2'"
+    }  
+    else if(hypnodf2[row,column]=="'3']"){
+    hypnodf2[row,column]="'3'"
+    }
+    else if(hypnodf2[row,column]=="'4']"){
+    hypnodf2[row,column]="'4'"
+    }
+    else if(hypnodf2[row,column]=="'-1']"){
+    hypnodf2[row,column]="'-1'"
+    }
+  }
+}
+```
+
+```{r}
+hypnoall<-cbind(train_eeg_output$TARGET,hypnodf)
+colnames(hypnoall)[colnames(hypnoall)=="train_eeg_output$TARGET"] <- "target"
+```
+
+```{r}
+library(caTools)
+set.seed(333)
+split<-sample.split(hypnoall$target,SplitRatio=0.65)
+hypnotrain<-subset(hypnoall,split==TRUE)
+hypnotest<-subset(hypnoall,split==FALSE)
+```
+
+```{r}
+
+```
+
